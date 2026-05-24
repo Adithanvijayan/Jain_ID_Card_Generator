@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TSPF ID Card Generator</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; background: #eef2f7; }
     .page-shell { max-width: 1500px; margin: 0 auto; display: grid; grid-template-columns: 420px 1fr; gap: 28px; }
@@ -94,18 +95,19 @@
 
       <div class="btns">
         <button class="primary" id="printBtn" type="button">Print / Save PDF</button>
+        <button class="secondary" id="imageBtn" type="button">Export Card as Image</button>
       </div>
 
       <p id="formError" class="error-text">Please fill all mandatory fields and provide a valid photo before printing or saving as PDF.</p>
     </div>
 
     <div class="preview-wrap">
-      <div class="card">
-        <img class="banner-img" src="https://drive.google.com/thumbnail?id=1wUJCa80IN_AdUonjRBOzm-IaBKT5q2lu&sz=w2000" alt="Top Banner">
+      <div class="card" id="cardArea">
+        <img class="banner-img" id="banner_img" crossorigin="anonymous" referrerpolicy="no-referrer" src="https://lh3.googleusercontent.com/d/1wUJCa80IN_AdUonjRBOzm-IaBKT5q2lu=w2000" alt="Top Banner">
 
         <div class="photo-wrap">
           <div class="photo-box">
-            <img id="c_photo" alt="Member Photo">
+            <img id="c_photo" crossorigin="anonymous" referrerpolicy="no-referrer" alt="Member Photo">
             <div id="photo_placeholder" class="photo-placeholder">Member Photo</div>
           </div>
         </div>
@@ -122,7 +124,7 @@
         </div>
 
         <div class="sign-row">
-          <img class="sign-full-img" src="https://drive.google.com/thumbnail?id=10sEH_fy-9lDAg7rMLT_8MXDGEKLAOyEm&sz=w2000" alt="Signature Section">
+          <img class="sign-full-img" id="sign_img" crossorigin="anonymous" referrerpolicy="no-referrer" src="https://lh3.googleusercontent.com/d/10sEH_fy-9lDAg7rMLT_8MXDGEKLAOyEm=w2000" alt="Signature Section">
         </div>
 
         <div class="org">
@@ -139,11 +141,59 @@
       const v = value.trim();
       if (!v) return '';
       let m = v.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-      if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`;
+      if (m) return `https://lh3.googleusercontent.com/d/${m[1]}=w1000`;
       m = v.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-      if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`;
-      if (/^[a-zA-Z0-9_-]{20,}$/.test(v)) return `https://drive.google.com/thumbnail?id=${v}&sz=w1000`;
+      if (m) return `https://lh3.googleusercontent.com/d/${m[1]}=w1000`;
+      if (/^[a-zA-Z0-9_-]{20,}$/.test(v)) return `https://lh3.googleusercontent.com/d/${v}=w1000`;
       return v;
+    }
+
+    function loadImageWithCors(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
+
+    async function imageSrcToDataUrl(src) {
+      const img = await loadImageWithCors(src);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      return canvas.toDataURL('image/png');
+    }
+
+    async function prepareCardCloneForExport(cardArea) {
+      const clone = cardArea.cloneNode(true);
+      clone.style.margin = '0';
+      clone.style.boxShadow = 'none';
+
+      const liveImages = cardArea.querySelectorAll('img');
+      const cloneImages = clone.querySelectorAll('img');
+
+      for (let i = 0; i < liveImages.length; i++) {
+        const liveImg = liveImages[i];
+        const cloneImg = cloneImages[i];
+        if (!cloneImg) continue;
+
+        const source = liveImg.currentSrc || liveImg.src;
+        if (!source) continue;
+
+        try {
+          const dataUrl = await imageSrcToDataUrl(source);
+          cloneImg.src = dataUrl;
+        } catch (e) {
+          cloneImg.src = source;
+        }
+      }
+
+      return clone;
     }
 
     function bindText(inputId, outputId) {
@@ -223,6 +273,60 @@
       await new Promise(resolve => setTimeout(resolve, 250));
       if (!validateForm()) return;
       requestAnimationFrame(() => window.print());
+    });
+
+    document.getElementById('imageBtn').addEventListener('click', async () => {
+      syncPhoto();
+      await new Promise(resolve => setTimeout(resolve, 300));
+      if (!validateForm()) return;
+
+      const cardArea = document.getElementById('cardArea');
+      const imageBtn = document.getElementById('imageBtn');
+      const originalText = imageBtn.textContent;
+      let exportHost = null;
+
+      try {
+        imageBtn.disabled = true;
+        imageBtn.textContent = 'Generating Image...';
+
+        exportHost = document.createElement('div');
+        exportHost.style.position = 'fixed';
+        exportHost.style.left = '-10000px';
+        exportHost.style.top = '0';
+        exportHost.style.background = '#fff';
+        document.body.appendChild(exportHost);
+
+        const cardClone = await prepareCardCloneForExport(cardArea);
+        exportHost.appendChild(cardClone);
+
+        const canvas = await html2canvas(cardClone, {
+          backgroundColor: '#ffffff',
+          scale: 2,
+          useCORS: true,
+          allowTaint: false,
+          imageTimeout: 15000,
+          logging: false
+        });
+
+        document.body.removeChild(exportHost);
+        exportHost = null;
+
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `tspf-id-card-${(document.getElementById('i_id').value || 'card').trim()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (err) {
+        formError.textContent = 'Unable to export image. If your photo URL blocks cross-origin access, use a direct image URL or a publicly accessible Drive image.';
+        formError.style.display = 'block';
+      } finally {
+        if (exportHost && exportHost.parentNode) {
+          exportHost.parentNode.removeChild(exportHost);
+        }
+        imageBtn.disabled = false;
+        imageBtn.textContent = originalText;
+      }
     });
   </script>
 </body>
